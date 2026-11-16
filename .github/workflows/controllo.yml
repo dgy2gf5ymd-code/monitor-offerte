@@ -39,6 +39,21 @@ jobs:
         continue-on-error: true
         run: python -u scripts/carica_confindustria_vicenza.py --min-dipendenti 20
 
+      - name: Aggiungi società da aziende.it (fatturato da 2 milioni, almeno 20 dipendenti)
+        continue-on-error: true
+        run: python -u scripts/carica_aziende_it.py --province padova,vicenza,venezia,treviso,rovigo --min-dipendenti 20 --max-schede 2500
+
+      - name: Aggiungi startup e PMI innovative (il lunedì o quando lanciato a mano)
+        continue-on-error: true
+        run: |
+          if [ "$(date +%u)" = "1" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python -u scripts/carica_innovative.py --province PD,VI,VE,TV,RO
+          fi
+
+      - name: Trova il sito delle aziende con partita IVA (verifica sulla pagina)
+        continue-on-error: true
+        run: python -u scripts/trova_siti.py --max 2500
+
       - name: Aggiungi aziende da OpenStreetMap (il lunedì o quando lanciato a mano)
         continue-on-error: true
         run: |
