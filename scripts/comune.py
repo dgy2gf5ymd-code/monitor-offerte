@@ -76,7 +76,7 @@ def scarica(url):
 
 def testo_visibile(html):
     soup = BeautifulSoup(html, "html.parser")
-    for t in soup(["script", "style", "noscript", "svg", "iframe", "template"]):
+    for t in soup(["script", "style", "noscript", "svg", "iframe", "template", "select", "option", "datalist"]):
         t.decompose()
     # menu e piè di pagina cambiano spesso e non contengono annunci
     for t in soup.find_all(["nav", "footer"]):

@@ -25,21 +25,30 @@ ELENCO = RADICE / "dati" / "aziende.csv"
 STATO = RADICE / "dati" / "stato.json"
 RISULTATI = RADICE / "risultati"
 
-PAROLE = [
-    r"marketing", r"comunicazion", r"social[\s\-]?media", r"social media", r"\bsocial\b(?!e)", r"content",
-    r"contenuti digitali", r"copywrit", r"digital", r"brand", r"grafic", r"graphic", r"designer",
-    r"eventi\b", r"\bevent", r"ufficio stampa", r"press office", r"\bpr\b", r"public relations", r"relazioni esterne",
-    r"e-?commerce", r"\bcrm\b", r"\bseo\b", r"\bsem\b", r"advertising", r"\bads\b", r"community", r"influencer",
-    r"creativ", r"customer experience", r"web ?master", r"web ?content", r"newsletter", r"trade marketing",
-    r"product manager", r"brand manager", r"communication", r"media ?planner", r"video ?maker", r"fotograf",
-]
-RX_MKT = re.compile("|".join(PAROLE), re.I)
-# righe da ignorare anche se contengono le parole sopra (testi generici del sito)
-RX_RUMORE = re.compile(
-    r"cookie|privacy|newsletter.*iscri|iscriviti|seguici|follow us|copyright|©|p\.?\s?iva|cooperativa sociale|"
-    r"ragione sociale|sede sociale|capitale sociale|responsabilit[aà] sociale|social responsibility|"
-    r"consenso|informativa|accetto|marketing e profilazione|finalit[aà] di marketing|comunicazioni commerciali",
-    re.I)
+# una riga conta se parla di marketing E sembra un ruolo/annuncio (non menu, cookie o privacy)
+RX_MKT = re.compile(r"marketing|comunicazione|communication|social[\s\-]?media|content[\s\-]?(creator|manager|specialist|marketing|editor|strategist)|"
+    r"copywrit|digital[\s\-]?(marketing|specialist|media|content|communication|pr\b|advertising|strategist)|"
+    r"brand[\s\-]?(manager|specialist|ambassador|activation|marketing|designer)|grafic[oa]|graphic|"
+    r"(event|eventi)[\s\-]?(manager|specialist|coordinator|planner|organizer)|organizzazione eventi|"
+    r"ufficio stampa|press office|public relations|relazioni esterne|\bpr (specialist|manager)|"
+    r"e-?commerce|\bcrm\b|\bseo\b|\bsem\b|advertising|performance marketing|community manager|influencer|"
+    r"customer experience|web ?content|trade marketing|product marketing|media ?planner|video ?maker|creative", re.I)
+RX_RUOLO = re.compile(r"specialist|manager|addett|responsabile|coordinat|assistant|assistente|junior|senior|stage|stagista|"
+    r"tirocin|internship|intern\b|impiegat|designer|copywriter|creator|account|executive|officer|analyst|"
+    r"operator|collaborat|figura|cerchiamo|ricerchiamo|selezioniamo|posizione|\(m/f\)|m/f|full[\s\-]?time|"
+    r"part[\s\-]?time|lead\b|editor|strategist|planner|consultant|consulente|esperto|esperta|referente|"
+    r"apprendist|tecnico|expert|owner|director", re.I)
+RX_RUMORE = re.compile(r"cookie|privacy|newsletter|iscri|seguici|follow us|copyright|©|p\.?\s?iva|cooperativa sociale|"
+    r"ragione sociale|sede sociale|capitale sociale|responsabilit[aà] sociale|consenso|informativa|accetto|"
+    r"profilazione|archiviazione|trattamento|titolare|interessat|finalit|comunicazioni commerciali|"
+    r"lecturer|bocconi|ricercatore|skip to|vai al contenuto|salta al", re.I)
+
+def rilevante(r):
+    if len(r) > 160 or len(r.split()) < 2:
+        return False
+    return bool(RX_MKT.search(r)) and bool(RX_RUOLO.search(r)) and not RX_RUMORE.search(r)
+
+
 RX_JS = re.compile(r"enable javascript|abilita javascript|attiva javascript|__NEXT_DATA__|id=\"root\"></div>|id=\"app\"></div>", re.I)
 
 
@@ -123,7 +132,7 @@ def main():
         prima = u not in stato
         vecchie = set(stato.get(u, {}).get("righe", []))
         for r in righe:
-            if RX_MKT.search(r) and not RX_RUMORE.search(r) and len(r) < 200:
+            if rilevante(r):
                 if prima or impronta(r) not in vecchie:
                     novita.append({
                         "data": oggi, "azienda": az["nome"], "comune": az["comune"], "settore": az.get("settore", ""),
