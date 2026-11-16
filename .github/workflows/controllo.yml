@@ -1,0 +1,57 @@
+name: Controllo pagine lavora con noi
+
+on:
+  schedule:
+    # lunedì, mercoledì e venerdì alle 6:23 ora italiana (5:23 UTC in inverno)
+    - cron: "23 5 * * 1,3,5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: controllo
+  cancel-in-progress: false
+
+jobs:
+  controllo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installa librerie
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Aggiorna l'elenco aziende da Confindustria Veneto Est
+        run: python scripts/carica_confindustria.py --provincia Padova
+
+      - name: Cerca le pagine lavoro delle aziende nuove
+        run: python scripts/scopri_pagine.py --max 800 --rifai
+
+      - name: Controlla le pagine lavoro
+        run: python scripts/controlla.py
+
+      - name: Salva i risultati nel repository
+        run: |
+          git config user.name "monitor-bot"
+          git config user.email "monitor-bot@users.noreply.github.com"
+          git add dati risultati
+          git commit -m "Controllo del $(date +%F)" || echo "Nessuna modifica"
+          git push
+
+      - name: Apri una segnalazione se ci sono novità
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(cat risultati/.ci_sono_novita)" = "1" ]; then
+            gh issue create --title "Novità pagine lavoro $(date +%d/%m/%Y)" --body-file risultati/ultimo_controllo.md
+          fi
