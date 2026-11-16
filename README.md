@@ -9,7 +9,9 @@ rispetta il file robots.txt di ogni sito e fa una richiesta alla volta per sito.
 ## Come funziona
 
 1. `dati/aziende.csv` — elenco aziende (nome, comune, settore, sito, pagina lavoro). A ogni giro
-   `scripts/carica_confindustria.py` aggiunge le associate Confindustria Veneto Est della provincia di Padova.
+   `scripts/carica_confindustria.py` aggiunge le associate Confindustria Veneto Est delle province di Padova,
+   Venezia, Rovigo e Treviso; il lunedì `scripts/carica_osm.py` aggiunge le attività con sito web presenti su
+   OpenStreetMap (Padova, Vicenza, Rovigo, Venezia, Treviso).
 2. `scripts/scopri_pagine.py` — per le aziende senza pagina lavoro apre il sito e cerca il link
    "Lavora con noi / Careers / Posizioni aperte"; se non c'è prova gli indirizzi più comuni.
 3. `scripts/controlla.py` — scarica tutte le pagine lavoro, le confronta con il giro precedente
