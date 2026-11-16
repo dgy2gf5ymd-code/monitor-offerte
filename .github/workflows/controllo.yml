@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
@@ -41,7 +43,7 @@ jobs:
 
       - name: Aggiungi società da aziende.it (fatturato da 2 milioni, almeno 20 dipendenti)
         continue-on-error: true
-        run: python -u scripts/carica_aziende_it.py --province padova,vicenza,venezia,treviso,rovigo --min-dipendenti 20 --max-schede 2500
+        run: python -u scripts/carica_aziende_it.py --province padova,vicenza,venezia,treviso,rovigo --min-dipendenti 20 --max-schede 600 --max-pagine 120 --pausa 5
 
       - name: Aggiungi startup e PMI innovative (il lunedì o quando lanciato a mano)
         continue-on-error: true
