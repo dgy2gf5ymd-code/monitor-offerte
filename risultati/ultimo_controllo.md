@@ -1,6 +1,6 @@
 # Controllo pagine lavoro del 2026-11-16
 
-Pagine controllate: 1458 su 1630 (non leggibili: 43)
+Pagine controllate: 1479 su 1643 (non leggibili: 36)
 
 Righe marketing NUOVE: 0
 
