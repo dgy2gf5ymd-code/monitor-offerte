@@ -49,6 +49,9 @@ def main():
     a = ap.parse_args()
     aziende = leggi_csv(ELENCO) if ELENCO.exists() else []
     ids = {x["id"] for x in aziende}
+    scarti_f = Path(__file__).resolve().parent.parent / "dati" / "vicenza_scartate.txt"
+    scarti = set(scarti_f.read_text().split()) if scarti_f.exists() else set()
+    ids |= scarti
     domini = {dominio(x["sito"]) for x in aziende if x.get("sito")}
     elenco = []
     for lettera in list(string.ascii_lowercase) + ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]:
@@ -74,11 +77,13 @@ def main():
         fascia = c.get("employees_nr") or ""
         if not soglia_ok(fascia, a.min_dipendenti):
             scartate += 1
+            scarti.add(id_)
             continue
         sito = (c.get("website") or "").strip()
         if sito and not sito.startswith("http"):
             sito = "https://" + sito
         if sito and dominio(sito) in domini:
+            scarti.add(id_)
             continue
         lavoro = (c.get("websitejob") or "").strip()
         if lavoro and not lavoro.startswith("http"):
@@ -95,6 +100,7 @@ def main():
         nuove += 1
         time.sleep(0.3)
     scrivi_csv(ELENCO, aziende, CAMPI)
+    scarti_f.write_text("\n".join(sorted(scarti)))
     print(f"Aggiunte {nuove} aziende; scartate {scartate} sotto i {a.min_dipendenti} dipendenti; totale elenco {len(aziende)}")
 
 

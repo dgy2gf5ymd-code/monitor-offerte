@@ -9,6 +9,7 @@ Le schede vengono lette a blocchi (--max-schede per giro): le aziende ancora da 
 restano segnate 'scheda da leggere' e vengono completate nei giri successivi.
 """
 import argparse
+import json
 import re
 import sys
 import time
@@ -19,6 +20,21 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, str(Path(__file__).parent))
 from comune import leggi_csv, scarica, scrivi_csv  # noqa: E402
+
+STATO = Path(__file__).resolve().parent.parent / "dati" / "aziende_it_stato.json"
+
+
+def scarica_paziente(url):
+    """Scarica rispettando i limiti del sito: se risponde 429 (troppe richieste) aspetta e riprova."""
+    attesa = 60
+    for _ in range(4):
+        fin, html = scarica(url)
+        if fin or "429" not in str(html):
+            return fin, html
+        print(f"  troppe richieste, attendo {attesa}s")
+        time.sleep(attesa)
+        attesa *= 2
+    return None, "HTTP 429 persistente"
 from scopri_pagine import CAMPI, ELENCO  # noqa: E402
 
 BASE = "https://www.aziende.it"
@@ -40,18 +56,20 @@ def fascia_ok(f):
     return not FASCE_NO.search(f)
 
 
-def leggi_elenco(prov, pausa):
+def leggi_elenco(prov, pausa, da_pag=1, max_pag=100):
+    """Ritorna (righe, ultima_pagina_letta, finito)."""
     out = []
-    for pag in range(1, 101):
+    ultima = da_pag - 1
+    for pag in range(da_pag, min(101, da_pag + max_pag)):
         url = f"{BASE}/veneto/{prov}/" + (f"?pag={pag}" if pag > 1 else "")
-        fin, html = scarica(url)
+        fin, html = scarica_paziente(url)
         if not fin:
             print(f"  {prov} pagina {pag}: {html}")
-            break
+            return out, ultima, False
         soup = BeautifulSoup(html, "html.parser")
         righe = soup.select("div.row.border-bottom")
         if not righe:
-            break
+            return out, pag, True
         sotto = 0
         for r in righe:
             a = r.find("a", href=True)
@@ -65,14 +83,15 @@ def leggi_elenco(prov, pausa):
                 continue
             out.append({"slug": a["href"].strip("/"), "nome": a.get_text(" ", strip=True), "fascia": fascia,
                         "ateco": col[2].get_text(" ", strip=True), "comune": comune})
+        ultima = pag
         if sotto == len(righe):  # elenco ordinato per fatturato: da qui in poi sono tutte sotto soglia
-            break
+            return out, pag, True
         time.sleep(pausa)
-    return out
+    return out, ultima, ultima >= 100
 
 
 def leggi_scheda(slug):
-    fin, html = scarica(f"{BASE}/{slug}")
+    fin, html = scarica_paziente(f"{BASE}/{slug}")
     if not fin:
         return None
     t = re.sub(r"\s+", " ", BeautifulSoup(html, "html.parser").get_text(" "))
@@ -88,16 +107,31 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--province", default="padova,vicenza,venezia,treviso,rovigo")
     ap.add_argument("--min-dipendenti", type=int, default=20)
-    ap.add_argument("--max-schede", type=int, default=2000)
+    ap.add_argument("--max-schede", type=int, default=600)
+    ap.add_argument("--max-pagine", type=int, default=120, help="pagine di elenco da leggere per giro (tutte le province)")
+    ap.add_argument("--pausa", type=float, default=5.0)
     a = ap.parse_args()
     aziende = leggi_csv(ELENCO) if ELENCO.exists() else []
     nomi = {norm(x["nome"]) for x in aziende}
     ids = {x["id"] for x in aziende}
     nuove = 0
+    stato = json.loads(STATO.read_text()) if STATO.exists() else {}
+    pagine_rimaste = a.max_pagine
     for prov in a.province.split(","):
         prov = prov.strip()
-        elenco = leggi_elenco(prov, 1.0)
-        print(f"Provincia {prov}: {len(elenco)} società con fatturato da 2 milioni in su")
+        st = stato.get(prov, {"pagina": 0, "finito": False})
+        if st.get("finito") or pagine_rimaste <= 0:
+            continue
+        richieste = min(pagine_rimaste, 100 - st["pagina"])
+        elenco, ultima, finito = leggi_elenco(prov, a.pausa, st["pagina"] + 1, pagine_rimaste)
+        lette = max(0, ultima - st["pagina"])
+        interrotto = not finito and lette < richieste
+        pagine_rimaste -= lette
+        stato[prov] = {"pagina": ultima, "finito": finito}
+        STATO.write_text(json.dumps(stato, indent=1))
+        print(f"Provincia {prov}: lette fino a pagina {ultima}{' (completata)' if finito else ''}, {len(elenco)} società da 2 milioni in su")
+        if interrotto:
+            pagine_rimaste = 0  # il sito ha limitato le richieste: si riprende al prossimo giro
         for x in elenco:
             id_ = "azit-" + x["slug"]
             if id_ in ids or norm(x["nome"]) in nomi:
@@ -128,7 +162,7 @@ def main():
         if i % 200 == 0:
             print(f"  schede lette {i}/{len(da_leggere)}")
             scrivi_csv(ELENCO, aziende, CAMPI)
-        time.sleep(1.0)
+        time.sleep(a.pausa * 0.6)
     scrivi_csv(ELENCO, aziende, CAMPI)
     rimaste = sum(1 for x in aziende if x.get("esito_ricerca") == "scheda da leggere")
     print(f"Schede lette: tenute {tenute}, scartate {scartate}; ancora da leggere {rimaste}; totale elenco {len(aziende)}")
