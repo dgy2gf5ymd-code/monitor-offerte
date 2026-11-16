@@ -17,7 +17,7 @@ concurrency:
 jobs:
   controllo:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
 
@@ -32,13 +32,21 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Aggiorna l'elenco aziende da Confindustria Veneto Est
-        run: python scripts/carica_confindustria.py --provincia Padova
+        continue-on-error: true
+        run: python -u scripts/carica_confindustria.py --provincia "Padova|Venezia|Rovigo|Treviso"
+
+      - name: Aggiungi aziende da OpenStreetMap (il lunedì o quando lanciato a mano)
+        continue-on-error: true
+        run: |
+          if [ "$(date +%u)" = "1" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python -u scripts/carica_osm.py --province PD,VI,RO,VE,TV
+          fi
 
       - name: Cerca le pagine lavoro delle aziende nuove
-        run: python scripts/scopri_pagine.py --max 800 --rifai
+        run: python -u scripts/scopri_pagine.py --max 1500 --rifai
 
       - name: Controlla le pagine lavoro
-        run: python scripts/controlla.py
+        run: python -u scripts/controlla.py
 
       - name: Salva i risultati nel repository
         run: |
