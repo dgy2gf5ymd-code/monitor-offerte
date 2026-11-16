@@ -18,7 +18,7 @@ from comune import Limitatore, dominio, leggi_csv, link, scarica, scrivi_csv, te
 RADICE = Path(__file__).resolve().parent.parent
 ELENCO = RADICE / "dati" / "aziende.csv"
 CAMPI = ["id", "nome", "comune", "settore", "sito", "fonte", "pagina_lavoro", "esito_ricerca",
-         "data_ricerca", "note"]
+         "data_ricerca", "note", "piva"]
 
 # parole che indicano un link verso la pagina lavoro (testo o indirizzo del link)
 RX_LINK = re.compile(
@@ -140,6 +140,8 @@ def main():
         if az.get("pagina_lavoro"):
             continue
         es = az.get("esito_ricerca", "")
+        if es in ("scheda da leggere", "sito da trovare") or es.startswith("scartata"):
+            continue
         if not es:
             da_fare.append(az)
         elif a.rifai and az.get("data_ricerca"):
