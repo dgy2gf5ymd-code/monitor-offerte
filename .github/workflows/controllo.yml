@@ -12,13 +12,16 @@ on:
       workers:
         description: "Richieste in parallelo per ogni job"
         default: "24"
+      browser:
+        description: "Riprovare col browser i siti in JavaScript e quelli che danno 403 (true/false)"
+        default: "true"
 
 permissions:
   contents: write
   issues: write
 
 concurrency:
-  group: controllo
+  group: elenco-aziende
   cancel-in-progress: false
 
 jobs:
@@ -65,8 +68,51 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # I siti costruiti in JavaScript e quelli che rifiutano il lettore automatico (403)
+  # vanno aperti con Chromium. E' piu' lento, quindi gira in 6 fette in parallelo
+  # insieme a "scopri", non dopo.
+  browser:
+    if: github.event.inputs.browser != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        fetta: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installa librerie
+        run: pip install -r requirements.txt
+
+      - name: Installa il browser
+        run: python -m playwright install --with-deps chromium
+
+      - name: Riprova col browser (fetta ${{ matrix.fetta }} di 6)
+        run: |
+          mkdir -p parziali
+          python -u scripts/scopri_pagine_browser.py \
+            --fetta ${{ matrix.fetta }} --di 6 \
+            --parziale parziali/browser-${{ matrix.fetta }}.csv
+
+      - name: Conserva i risultati della fetta
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fetta-browser-${{ matrix.fetta }}
+          path: parziali/browser-${{ matrix.fetta }}.csv
+          if-no-files-found: warn
+          retention-days: 7
+
   unisci:
-    needs: scopri
+    needs: [scopri, browser]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 60

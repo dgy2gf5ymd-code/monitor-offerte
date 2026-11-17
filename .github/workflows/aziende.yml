@@ -3,18 +3,23 @@ name: Raccolta nuove aziende
 # Tiene separata la raccolta delle aziende dal controllo delle offerte: aziende.it
 # limita le richieste e va interrogato piano, e un blocco qui non deve mai fermare
 # il controllo delle pagine lavoro.
+# Ogni fonte salva subito il proprio risultato: così si vede l'avanzamento mentre
+# gira e un errore a metà non fa perdere il lavoro già fatto.
 
 on:
   schedule:
-    # ogni lunedì alle 4:11 ora italiana
-    - cron: "11 3 * * 1"
+    # martedì e sabato alle 4:11 ora italiana, lontano dai giorni del controllo
+    # offerte: due giri a settimana finché c'è l'arretrato di schede aziende.it
+    - cron: "11 3 * * 2,6"
   workflow_dispatch: {}
 
 permissions:
   contents: write
 
+# stesso gruppo del controllo offerte: i due workflow scrivono lo stesso elenco,
+# quindi non devono mai girare insieme (il secondo aspetta il primo)
 concurrency:
-  group: aziende
+  group: elenco-aziende
   cancel-in-progress: false
 
 jobs:
@@ -34,37 +39,57 @@ jobs:
       - name: Installa librerie
         run: pip install -r requirements.txt
 
+      - name: Prepara il salvataggio
+        run: |
+          git config user.name "monitor-bot"
+          git config user.email "monitor-bot@users.noreply.github.com"
+          printf '%s\n' '#!/bin/bash' 'git add dati' \
+            'git commit -m "$1 del $(date +%F)" || { echo "Nessuna modifica"; exit 0; }' \
+            'git pull --rebase -X theirs origin main || true' 'git push' > /tmp/salva
+          chmod +x /tmp/salva
+
       - name: Confindustria Veneto Est
         continue-on-error: true
         run: python -u scripts/carica_confindustria.py --provincia "Padova|Venezia|Rovigo|Treviso"
+      - name: Salva
+        if: always()
+        run: /tmp/salva "Confindustria Veneto Est"
 
       - name: Confindustria Vicenza
         continue-on-error: true
         run: python -u scripts/carica_confindustria_vicenza.py --min-dipendenti 20
+      - name: Salva
+        if: always()
+        run: /tmp/salva "Confindustria Vicenza"
 
       - name: OpenStreetMap
         continue-on-error: true
         run: python -u scripts/carica_osm.py --province PD,VI,RO,VE,TV
+      - name: Salva
+        if: always()
+        run: /tmp/salva "OpenStreetMap"
 
       - name: Startup e PMI innovative
         continue-on-error: true
         run: python -u scripts/carica_innovative.py --province PD,VI,VE,TV,RO
+      - name: Salva
+        if: always()
+        run: /tmp/salva "Startup e PMI innovative"
 
-      # aziende.it ci ha risposto 429: una richiesta ogni 5 secondi e si riprende
-      # dal punto salvato in dati/aziende_it_stato.json al giro successivo.
+      # aziende.it ci ha risposto 429 quando andavamo a una richiesta al secondo.
+      # Con pausa 3 restiamo tre volte sotto quella soglia, e lo script rallenta
+      # da solo (e si ferma salvando lo stato) se il sito protesta di nuovo.
+      # max-schede 3000 vale circa due ore e mezza: serve a smaltire l'arretrato.
       - name: aziende.it (fatturato da 2 milioni, almeno 20 dipendenti)
         continue-on-error: true
-        run: python -u scripts/carica_aziende_it.py --province padova,vicenza,venezia,treviso,rovigo --min-dipendenti 20 --max-schede 1200 --max-pagine 120 --pausa 5
+        run: python -u scripts/carica_aziende_it.py --province padova,vicenza,venezia,treviso,rovigo --min-dipendenti 20 --max-schede 3000 --max-pagine 120 --pausa 3
+      - name: Salva
+        if: always()
+        run: /tmp/salva "aziende.it"
 
       - name: Trova il sito delle aziende con partita IVA (verifica sulla pagina)
         continue-on-error: true
         run: python -u scripts/trova_siti.py --max 4000
-
-      - name: Salva l'elenco aggiornato
-        run: |
-          git config user.name "monitor-bot"
-          git config user.email "monitor-bot@users.noreply.github.com"
-          git add dati
-          git commit -m "Raccolta aziende del $(date +%F)" || echo "Nessuna modifica"
-          git pull --rebase -X theirs origin main || true
-          git push
+      - name: Salva
+        if: always()
+        run: /tmp/salva "Siti trovati"
