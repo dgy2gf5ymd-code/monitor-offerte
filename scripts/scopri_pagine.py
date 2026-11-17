@@ -34,6 +34,8 @@ ELENCO = RADICE / "dati" / "aziende.csv"
 CAMPI = ["id", "nome", "comune", "settore", "sito", "fonte", "pagina_lavoro", "esito_ricerca",
          "data_ricerca", "note", "piva"]
 CAMPI_PARZIALE = ["id", "pagina_lavoro", "esito_ricerca", "data_ricerca"]
+# quante pagine candidate provare per azienda: con il browser costano molto di piu'
+MAX_CANDIDATI = 12
 
 # parole che indicano con buona certezza una pagina lavoro
 RX_LINK = re.compile(
@@ -219,7 +221,7 @@ def cerca_azienda(az, lim):
     # verifica: accettiamo la prima pagina che parla davvero di lavoro
     principale = html_pagina = None
     non_pertinenti = 0
-    for u in candidati[:12]:
+    for u in candidati[:MAX_CANDIDATI]:
         if "linkedin.com" in u:
             principale, html_pagina = u, None
             break

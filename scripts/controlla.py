@@ -5,8 +5,9 @@ Uso: python scripts/controlla.py [--senza-browser]
 Per ogni pagina salva le impronte delle righe di testo (dati/stato.json).
 Al giro successivo le righe che non c'erano prima e che contengono parole
 del marketing finiscono in risultati/novita_AAAA-MM-GG.csv e .md.
-Al primo controllo di una pagina le righe marketing presenti vengono
-segnalate come "presente al primo controllo".
+Quando una pagina viene letta per la prima volta le righe marketing che contiene
+sono comunque nuove per chi legge il riepilogo, quindi vengono segnalate come
+"NUOVA (prima lettura della pagina)" e non nascoste.
 """
 import argparse
 import csv
@@ -43,10 +44,42 @@ RX_RUMORE = re.compile(r"cookie|privacy|newsletter|iscri|seguici|follow us|copyr
     r"profilazione|archiviazione|trattamento|titolare|interessat|finalit|comunicazioni commerciali|"
     r"lecturer|bocconi|ricercatore|skip to|vai al contenuto|salta al", re.I)
 
+# posizioni non piu' disponibili
+RX_SCADUTA = re.compile(r"\bscadut|posizione chiusa|non pi[uù] disponibile|\bclosed\b|\bexpired\b", re.I)
+# sedi fuori dall'area di interesse: "- Houston, TX" e simili, paesi e citta' estere
+# sigle di stati USA scelte una per una: sono escluse quelle che coincidono con una
+# provincia italiana (MI Milano, CO Como, PA Palermo, VA Varese, TN Trento, CA Cagliari...)
+STATI_USA = ("TX|AZ|FL|GA|NJ|OH|NY|NC|ND|SD|WA|WV|WI|WY|OK|NE|NV|NH|NM|KY|KS|IA|ID|IL|IN|"
+             "HI|DE|CT|DC|MD|ME|MT|SC|AK|MA|LA|UT")
+RX_ESTERO = re.compile(rf"[,\s-]\s*({STATI_USA})\s*$|\(w/m/d\)|\bUSA\b|United States|\b(Houston|Phoenix|Dallas|Austin|"
+                       r"Chicago|Boston|Atlanta|Seattle|London|Paris|Madrid|Barcelona|Berlin|Munich|Hamburg|"
+                       r"Warsaw|Krakow|Bucharest|Budapest|Prague|Amsterdam|Brussels|Shanghai|Singapore|"
+                       r"Mumbai|Bangalore|Dubai|Istanbul)\b", re.I)
+# testo che parla di marketing ma non e' un annuncio: pubblicita' del prodotto,
+# biografie, firme email, descrizioni tecniche, frasi di contatto
+RX_NON_ANNUNCIO = re.compile(r"^\s*(mi chiamo|sono un[ao]?\b|ti aiuto|vi aiuto|aiutiamo|offriamo|scopri come|"
+                             r"grazie per|benvenut)|mai pi[uù] |ti permette di|vi permette di|"
+                             r"for questions regarding|per (qualsiasi )?informazion[ei] (scriv|contatt)|"
+                             r"puoi (sempre )?contattare|\bprofinet\b|ethernet|\bplc\b|protocoll[oi] di comunicazione|"
+                             r"sistemi di comunicazione|communication systems|"
+                             r"gestione della comunicazione tra|flusso delle lead|"
+                             r"dynamics 365|functional consultant", re.I)
+# enti e societa' pubbliche: la ricerca esclude sempre i concorsi pubblici
+RX_PUBBLICO = re.compile(r"\bamcps\b|valore citt|comune di |provincia di |regione |azienda ospedalier|"
+                         r"\bulss\b|\ba\.?s\.?l\.?\b|ospedale|universit|istituto comprensivo|"
+                         r"scuola (primaria|secondaria)|camera di commercio|consorzio di bonifica", re.I)
+
+
 def rilevante(r):
+    """True se la riga sembra davvero un annuncio di marketing utile."""
     if len(r) > 160 or len(r.split()) < 2:
         return False
-    return bool(RX_MKT.search(r)) and bool(RX_RUOLO.search(r)) and not RX_RUMORE.search(r)
+    if not RX_MKT.search(r) or not RX_RUOLO.search(r):
+        return False
+    for rx in (RX_RUMORE, RX_SCADUTA, RX_ESTERO, RX_NON_ANNUNCIO):
+        if rx.search(r):
+            return False
+    return True
 
 
 RX_JS = re.compile(r"enable javascript|abilita javascript|attiva javascript|__NEXT_DATA__|id=\"root\"></div>|id=\"app\"></div>", re.I)
@@ -137,7 +170,7 @@ def main():
                     novita.append({
                         "data": oggi, "azienda": az["nome"], "comune": az["comune"], "settore": az.get("settore", ""),
                         "riga_trovata": r, "pagina": u,
-                        "tipo": "presente al primo controllo" if prima else "NUOVA",
+                        "tipo": "NUOVA (prima lettura della pagina)" if prima else "NUOVA",
                     })
         stato[u] = {"righe": sorted({impronta(r) for r in righe}), "ultimo_controllo": oggi}
     for u, err in errori.items():
@@ -148,6 +181,7 @@ def main():
     RISULTATI.mkdir(exist_ok=True)
     campi = ["data", "tipo", "azienda", "comune", "settore", "riga_trovata", "pagina"]
     nuove = [n for n in novita if n["tipo"] == "NUOVA"]
+    prime_lettura = [n for n in novita if n["tipo"] != "NUOVA"]
     if novita:
         with open(RISULTATI / f"novita_{oggi}.csv", "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=campi)
@@ -163,22 +197,29 @@ def main():
     # riepilogo leggibile (usato anche per la notifica)
     md = [f"# Controllo pagine lavoro del {oggi}", "",
           f"Pagine controllate: {len(lette)} su {len(lavori)} (non leggibili: {len(errori)})", "",
-          f"Righe marketing NUOVE: {len(nuove)}", ""]
-    per_az = {}
-    for n in nuove:
-        per_az.setdefault((n["azienda"], n["comune"], n["pagina"]), []).append(n["riga_trovata"])
-    for (az, com, pag), rr in sorted(per_az.items()):
-        md.append(f"## {az} ({com})")
-        md.append(pag)
-        md += [f"- {r}" for r in rr[:8]]
+          f"Posizioni marketing da vedere: {len(novita)} "
+          f"({len(nuove)} comparse su pagine già note, {len(prime_lettura)} su pagine lette per la prima volta)", ""]
+
+    def elenca(titolo, righe):
+        if not righe:
+            return
+        md.append(f"## {titolo}")
         md.append("")
-    prime = len(novita) - len(nuove)
-    if prime:
-        md.append(f"Pagine controllate per la prima volta: {prime} righe marketing già presenti (vedi CSV).")
+        per_az = {}
+        for n in righe:
+            per_az.setdefault((n["azienda"], n["comune"], n["pagina"]), []).append(n["riga_trovata"])
+        for (az, com, pag), rr in sorted(per_az.items()):
+            md.append(f"### {az}" + (f" ({com})" if com else ""))
+            md.append(pag)
+            md += [f"- {r}" for r in rr[:8]]
+            md.append("")
+
+    elenca("Nuove su pagine già controllate in passato", nuove)
+    elenca("Trovate su pagine controllate per la prima volta", prime_lettura)
     (RISULTATI / "ultimo_controllo.md").write_text("\n".join(md), "utf-8")
     print("\n".join(md[:6]))
     # file usato dal workflow per decidere se aprire una segnalazione
-    (RISULTATI / ".ci_sono_novita").write_text("1" if nuove or prime else "0")
+    (RISULTATI / ".ci_sono_novita").write_text("1" if novita else "0")
 
 
 if __name__ == "__main__":
