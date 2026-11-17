@@ -4,7 +4,14 @@ on:
   schedule:
     # lunedì, mercoledì e venerdì alle 6:23 ora italiana (5:23 UTC in inverno)
     - cron: "23 5 * * 1,3,5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      riprova_fallite:
+        description: "Ricontrolla i fallimenti più vecchi di N giorni (1 = tutti)"
+        default: "30"
+      workers:
+        description: "Richieste in parallelo per ogni job"
+        default: "24"
 
 permissions:
   contents: write
@@ -15,9 +22,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  controllo:
+  # La ricerca delle pagine lavoro è divisa in 8 job che lavorano in parallelo su
+  # fette diverse dell'elenco. Ogni job scrive solo i propri risultati, che vengono
+  # riuniti dal job "unisci": così non si sovrascrivono a vicenda.
+  scopri:
     runs-on: ubuntu-latest
-    timeout-minutes: 340
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        fetta: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,44 +43,59 @@ jobs:
           cache: pip
 
       - name: Installa librerie
+        run: pip install -r requirements.txt
+
+      - name: Cerca le pagine lavoro (fetta ${{ matrix.fetta }} di 8)
         run: |
-          pip install -r requirements.txt
-          python -m playwright install --with-deps chromium
+          mkdir -p parziali
+          python -u scripts/scopri_pagine.py \
+            --fetta ${{ matrix.fetta }} --di 8 \
+            --workers ${{ github.event.inputs.workers || '24' }} \
+            --riprova-fallite ${{ github.event.inputs.riprova_fallite || '30' }} \
+            --rifai \
+            --parziale parziali/fetta-${{ matrix.fetta }}.csv
 
-      - name: Aggiorna l'elenco aziende da Confindustria Veneto Est
-        continue-on-error: true
-        run: python -u scripts/carica_confindustria.py --provincia "Padova|Venezia|Rovigo|Treviso"
+      # anche se il job scade per tempo, i risultati parziali già salvati vanno conservati
+      - name: Conserva i risultati della fetta
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fetta-${{ matrix.fetta }}
+          path: parziali/fetta-${{ matrix.fetta }}.csv
+          if-no-files-found: warn
+          retention-days: 7
 
-      - name: Aggiorna l'elenco aziende da Confindustria Vicenza
-        continue-on-error: true
-        run: python -u scripts/carica_confindustria_vicenza.py --min-dipendenti 20
+  unisci:
+    needs: scopri
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
 
-      - name: Aggiungi società da aziende.it (fatturato da 2 milioni, almeno 20 dipendenti)
-        continue-on-error: true
-        run: python -u scripts/carica_aziende_it.py --province padova,vicenza,venezia,treviso,rovigo --min-dipendenti 20 --max-schede 600 --max-pagine 120 --pausa 5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
 
-      - name: Aggiungi startup e PMI innovative (il lunedì o quando lanciato a mano)
-        continue-on-error: true
+      - name: Installa librerie
+        run: pip install -r requirements.txt
+
+      - name: Recupera i risultati delle 8 fette
+        uses: actions/download-artifact@v4
+        with:
+          path: parziali
+          pattern: fetta-*
+          merge-multiple: true
+
+      - name: Riunisci i risultati nell'elenco aziende
         run: |
-          if [ "$(date +%u)" = "1" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python -u scripts/carica_innovative.py --province PD,VI,VE,TV,RO
-          fi
+          ls -l parziali/ || true
+          python -u scripts/unisci_parziali.py parziali/*.csv
 
-      - name: Trova il sito delle aziende con partita IVA (verifica sulla pagina)
-        continue-on-error: true
-        run: python -u scripts/trova_siti.py --max 2500
-
-      - name: Aggiungi aziende da OpenStreetMap (il lunedì o quando lanciato a mano)
-        continue-on-error: true
-        run: |
-          if [ "$(date +%u)" = "1" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python -u scripts/carica_osm.py --province PD,VI,RO,VE,TV
-          fi
-
-      - name: Cerca le pagine lavoro delle aziende nuove
-        run: python -u scripts/scopri_pagine.py --max 3000 --rifai
-
-      - name: Controlla le pagine lavoro
+      - name: Controlla le pagine lavoro e cerca le offerte marketing
         run: python -u scripts/controlla.py
 
       - name: Salva i risultati nel repository

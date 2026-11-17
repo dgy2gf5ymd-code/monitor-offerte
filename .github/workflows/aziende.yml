@@ -1,0 +1,70 @@
+name: Raccolta nuove aziende
+
+# Tiene separata la raccolta delle aziende dal controllo delle offerte: aziende.it
+# limita le richieste e va interrogato piano, e un blocco qui non deve mai fermare
+# il controllo delle pagine lavoro.
+
+on:
+  schedule:
+    # ogni lunedì alle 4:11 ora italiana
+    - cron: "11 3 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aziende
+  cancel-in-progress: false
+
+jobs:
+  raccolta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installa librerie
+        run: pip install -r requirements.txt
+
+      - name: Confindustria Veneto Est
+        continue-on-error: true
+        run: python -u scripts/carica_confindustria.py --provincia "Padova|Venezia|Rovigo|Treviso"
+
+      - name: Confindustria Vicenza
+        continue-on-error: true
+        run: python -u scripts/carica_confindustria_vicenza.py --min-dipendenti 20
+
+      - name: OpenStreetMap
+        continue-on-error: true
+        run: python -u scripts/carica_osm.py --province PD,VI,RO,VE,TV
+
+      - name: Startup e PMI innovative
+        continue-on-error: true
+        run: python -u scripts/carica_innovative.py --province PD,VI,VE,TV,RO
+
+      # aziende.it ci ha risposto 429: una richiesta ogni 5 secondi e si riprende
+      # dal punto salvato in dati/aziende_it_stato.json al giro successivo.
+      - name: aziende.it (fatturato da 2 milioni, almeno 20 dipendenti)
+        continue-on-error: true
+        run: python -u scripts/carica_aziende_it.py --province padova,vicenza,venezia,treviso,rovigo --min-dipendenti 20 --max-schede 1200 --max-pagine 120 --pausa 5
+
+      - name: Trova il sito delle aziende con partita IVA (verifica sulla pagina)
+        continue-on-error: true
+        run: python -u scripts/trova_siti.py --max 4000
+
+      - name: Salva l'elenco aggiornato
+        run: |
+          git config user.name "monitor-bot"
+          git config user.email "monitor-bot@users.noreply.github.com"
+          git add dati
+          git commit -m "Raccolta aziende del $(date +%F)" || echo "Nessuna modifica"
+          git pull --rebase -X theirs origin main || true
+          git push
