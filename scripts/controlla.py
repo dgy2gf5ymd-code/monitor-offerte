@@ -82,6 +82,48 @@ def rilevante(r):
     return True
 
 
+# citta' e paesi fuori dall'area di ricerca: il comune nell'elenco e' la sede legale
+# dell'azienda, non il luogo di lavoro dell'annuncio, quindi la sede va cercata
+# nelle righe intorno al titolo
+RX_SEDE_ESTERA = re.compile(r"\b(barcelona|barcellona|madrid|valencia|vigo|bilbao|lisbo|porto\b|"
+                            r"london|londra|manchester|dublin|dublino|paris|parigi|lyon|"
+                            r"berlin|berlino|munich|monaco di baviera|hamburg|frankfurt|stuttgart|"
+                            r"amsterdam|rotterdam|utrecht|brussels|bruxelles|antwerp|luxembourg|"
+                            r"wien|vienna|zurich|zurigo|geneva|ginevra|basel|"
+                            r"warsaw|varsavia|krakow|cracovia|prague|praga|budapest|bucharest|bucarest|"
+                            r"sofia|belgrade|zagreb|athens|atene|istanbul|"
+                            r"tirana|shkod|durres|albania|"
+                            r"new york|boston|chicago|houston|dallas|austin|atlanta|seattle|"
+                            r"san francisco|los angeles|miami|toronto|montreal|"
+                            r"shanghai|beijing|pechino|hong kong|singapore|tokyo|seoul|"
+                            r"mumbai|bangalore|delhi|dubai|tel aviv|"
+                            r"sao paulo|mexico city|buenos aires|sydney|melbourne|"
+                            # citta' italiane fuori dal raggio di un'ora da Selvazzano
+                            # (Milano resta ammessa: raggiungibile in treno, come richiesto)
+                            r"roma\b|napoli|torino|firenze|genova|bari\b|palermo|catania|cagliari|"
+                            r"messina|taranto|lecce|brindisi|reggio calabria|reggio emilia|salerno|"
+                            r"perugia|ancona|pescara|l'aquila|campobasso|potenza|catanzaro|sassari|"
+                            r"trieste|udine|pordenone|trento|bolzano|brescia|bergamo|como\b|varese|"
+                            r"monza|pavia|cremona|parma|modena|piacenza|ravenna|rimini|forl|cesena|"
+                            r"pisa\b|livorno|siena|arezzo|prato\b|lucca|latina|frosinone|terni|"
+                            r"novara|alessandria|asti\b|cuneo|savona|la spezia|imperia|aosta)\b|"
+                            r"\b(spain|spagna|france|francia|germany|germania|deutschland|netherlands|"
+                            r"belgium|belgio|portugal|portogallo|poland|polonia|romania|albania|"
+                            r"united kingdom|ireland|irlanda|switzerland|svizzera|austria|"
+                            r"czech|hungary|turkey|turchia|india|china|cina|brazil|brasile)\b", re.I)
+# luoghi dell'area di interesse: se compaiono, la sede estera vicina riguarda un altro annuncio
+RX_SEDE_NOSTRA = re.compile(r"\b(padova|vicenza|rovigo|venezia|treviso|verona|mestre|milano|milan|"
+                            r"bologna|veneto|lombardia|italia|italy|remoto|remote|smart working)\b", re.I)
+
+
+def sede_fuori_area(riga, vicine):
+    """'fuori area' se nelle righe intorno compare una sede estera e nessuna nostra."""
+    testo = " / ".join(vicine)
+    if RX_SEDE_ESTERA.search(testo) and not RX_SEDE_NOSTRA.search(testo):
+        return "fuori area"
+    return ""
+
+
 RX_JS = re.compile(r"enable javascript|abilita javascript|attiva javascript|__NEXT_DATA__|id=\"root\"></div>|id=\"app\"></div>", re.I)
 
 
@@ -164,12 +206,15 @@ def main():
         righe = lette[u]
         prima = u not in stato
         vecchie = set(stato.get(u, {}).get("righe", []))
-        for r in righe:
+        for i, r in enumerate(righe):
             if rilevante(r):
                 if prima or impronta(r) not in vecchie:
+                    vicine = righe[max(0, i - 2):i + 3]
+                    contesto = " / ".join(x for x in vicine if x != r)[:300]
                     novita.append({
                         "data": oggi, "azienda": az["nome"], "comune": az["comune"], "settore": az.get("settore", ""),
-                        "riga_trovata": r, "pagina": u,
+                        "riga_trovata": r, "pagina": u, "contesto": contesto,
+                        "sede": sede_fuori_area(r, vicine),
                         "tipo": "NUOVA (prima lettura della pagina)" if prima else "NUOVA",
                     })
         stato[u] = {"righe": sorted({impronta(r) for r in righe}), "ultimo_controllo": oggi}
@@ -179,9 +224,11 @@ def main():
 
     STATO.write_text(json.dumps(stato, ensure_ascii=False, separators=(",", ":")), "utf-8")
     RISULTATI.mkdir(exist_ok=True)
-    campi = ["data", "tipo", "azienda", "comune", "settore", "riga_trovata", "pagina"]
-    nuove = [n for n in novita if n["tipo"] == "NUOVA"]
-    prime_lettura = [n for n in novita if n["tipo"] != "NUOVA"]
+    campi = ["data", "tipo", "azienda", "comune", "settore", "riga_trovata", "sede", "contesto", "pagina"]
+    fuori = [n for n in novita if n["sede"]]
+    in_area = [n for n in novita if not n["sede"]]
+    nuove = [n for n in in_area if n["tipo"] == "NUOVA"]
+    prime_lettura = [n for n in in_area if n["tipo"] != "NUOVA"]
     if novita:
         with open(RISULTATI / f"novita_{oggi}.csv", "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=campi)
@@ -197,8 +244,11 @@ def main():
     # riepilogo leggibile (usato anche per la notifica)
     md = [f"# Controllo pagine lavoro del {oggi}", "",
           f"Pagine controllate: {len(lette)} su {len(lavori)} (non leggibili: {len(errori)})", "",
-          f"Posizioni marketing da vedere: {len(novita)} "
-          f"({len(nuove)} comparse su pagine già note, {len(prime_lettura)} su pagine lette per la prima volta)", ""]
+          f"Posizioni marketing da vedere: {len(in_area)} "
+          f"({len(nuove)} comparse su pagine già note, {len(prime_lettura)} su pagine lette per la prima volta)"
+          + (f"; altre {len(fuori)} con sede probabilmente fuori area" if fuori else ""), "",
+          "Il comune indicato è la sede legale dell'azienda: il luogo di lavoro "
+          "dell'annuncio può essere diverso, vedere la colonna contesto nel CSV.", ""]
 
     def elenca(titolo, righe):
         if not righe:
@@ -216,6 +266,7 @@ def main():
 
     elenca("Nuove su pagine già controllate in passato", nuove)
     elenca("Trovate su pagine controllate per la prima volta", prime_lettura)
+    elenca("FUORI ZONA - aprire solo se l'annuncio è full remote", fuori)
     (RISULTATI / "ultimo_controllo.md").write_text("\n".join(md), "utf-8")
     print("\n".join(md[:6]))
     # file usato dal workflow per decidere se aprire una segnalazione
