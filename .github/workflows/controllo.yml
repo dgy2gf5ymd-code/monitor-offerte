@@ -83,6 +83,10 @@ jobs:
       - name: Installa librerie
         run: pip install -r requirements.txt
 
+      # controlla.py apre con un browser vero le pagine costruite in JavaScript
+      - name: Installa il browser
+        run: python -m playwright install --with-deps chromium
+
       - name: Recupera i risultati delle 8 fette
         uses: actions/download-artifact@v4
         with:
@@ -94,6 +98,15 @@ jobs:
         run: |
           ls -l parziali/ || true
           python -u scripts/unisci_parziali.py parziali/*.csv
+
+      - name: Salva subito l'elenco unito (prima del controllo offerte)
+        run: |
+          git config user.name "monitor-bot"
+          git config user.email "monitor-bot@users.noreply.github.com"
+          git add dati
+          git commit -m "Pagine lavoro del $(date +%F)" || echo "Nessuna modifica"
+          git pull --rebase -X theirs origin main || true
+          git push
 
       - name: Controlla le pagine lavoro e cerca le offerte marketing
         run: python -u scripts/controlla.py
@@ -111,6 +124,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$(cat risultati/.ci_sono_novita)" = "1" ]; then
+          if [ "$(cat risultati/.ci_sono_novita 2>/dev/null)" = "1" ]; then
             gh issue create --title "Novità pagine lavoro $(date +%d/%m/%Y)" --body-file risultati/ultimo_controllo.md
           fi
