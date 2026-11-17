@@ -1,3 +1,10 @@
 {
- "padova": {"pagina": 30, "finito": false}
+ "padova": {
+  "pagina": 81,
+  "finito": true
+ },
+ "vicenza": {
+  "pagina": 69,
+  "finito": false
+ }
 }
