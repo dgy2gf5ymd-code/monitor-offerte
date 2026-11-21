@@ -4,7 +4,15 @@
   "finito": true
  },
  "vicenza": {
-  "pagina": 69,
+  "pagina": 79,
+  "finito": true
+ },
+ "venezia": {
+  "pagina": 48,
+  "finito": true
+ },
+ "treviso": {
+  "pagina": 62,
   "finito": false
  }
 }
