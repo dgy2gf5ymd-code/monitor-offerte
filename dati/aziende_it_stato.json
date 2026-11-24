@@ -12,7 +12,11 @@
   "finito": true
  },
  "treviso": {
-  "pagina": 62,
-  "finito": false
+  "pagina": 75,
+  "finito": true
+ },
+ "rovigo": {
+  "pagina": 13,
+  "finito": true
  }
 }
